@@ -16,37 +16,114 @@
 
 
 queue* sharedQueue;
+queue* elemsQueue;
 sem_t sem_full, sem_empty;
 pthread_mutex_t mutex;
 
-void *producir(int fd){
-    while (1) {  // Cambiar por una condición real de parada
-        sem_wait(&sem_empty);
-        pthread_mutex_lock(&mutex);
 
-        // Producir un elemento y encolarlo
-        struct element* newElem = ;  // Suponiendo que esto es lo que se encola
-        // Configurar newElem según sea necesario
-        queue_put(sharedQueue, newElem);
+int read_line(int fd, char *buffer, int buffer_size) {
+    int count = 0;
+    char ch;
+    ssize_t read_bytes;
 
-        pthread_mutex_unlock(&mutex);
-        sem_post(&sem_full);
+    while (count < buffer_size - 1) { // Dejamos espacio para el '\0' final
+        read_bytes = read(fd, &ch, 1); // Leer un carácter a la vez
+
+        if (read_bytes == 1) { // Si se leyó un carácter
+            if (ch == '\n') { // Si es un salto de línea, terminamos la línea
+                break;
+            }
+            buffer[count++] = ch; // Guardar el carácter en el buffer
+        } else if (read_bytes == 0) { // No más datos (EOF)
+            if (count == 0) { // Si no hemos leído nada, retornamos -1
+                return -1;
+            }
+            break; // Si ya hemos leído algo, simplemente terminamos
+        } else { // Error al leer
+            perror("Error reading from file descriptor");
+            return -1;
+        }
     }
+    buffer[count] = '\0'; // Terminar la cadena correctamente
+    return count; // Retornar el número de caracteres leídos
+}
+
+void almacenar(int fd){
+    char id[1], action[8], units[2], blanco;
+    ssize_t nread;
+    struct element e;
+    int final = 0;
+
+    // Inicia un bucle infinito que se rompe solo si 'read' falla
+    while(!final) {
+        // Leer product_id
+        nread = read(fd, id, 1);
+        if (nread != 1) {
+            // No hay más datos para leer, fin del archivo
+            final = 1;
+        }
+        //Solo sigue si no se encuentra final
+        if (!final) {
+        e.product_id = atoi(id);
+
+        // Leer espacio blanco después de product_id
+        if (read(fd, &blanco, 1) != 1) {
+            perror("Failed to read space after product_id");
+        }
+
+        // Leer operación
+        nread = read(fd, action, 8);
+        if (nread != 1) {
+            perror("Failed to read operation");
+        }
+        e.op = atoi(action);
+
+        // Leer espacio blanco después de operación
+        if (read(fd, &blanco, 1) != 1) {
+            perror("Failed to read space after operation");
+        }
+
+        // Leer unidades
+        nread = read(fd, units, 2);
+        if (nread != 1) {
+            perror("Failed to read units");
+        }
+        e.units = atoi(units);
+
+        // añadimos al array la estrcutura e de la linea "contador"
+        queue_put(elemsQueue, &e);
+        }
+    }
+}
+
+void *producir(){
+    //sem_wait(&sem_empty);
+
+    pthread_mutex_lock(&mutex);//bloqueo por entrar en seccion critica
+    //seccion critica
+    struct element *newElem;
+    newElem = queue_get(elemsQueue);
+    queue_put(sharedQueue, newElem);
+
+    //salida de seccion critica
+    pthread_mutex_unlock(&mutex);
+    //sem_post(&sem_full);
     return NULL;
 }
 
 void *consumir(){
-    while (1) {  // Cambiar por una condición real de parada
-        sem_wait(&sem_full);
-        pthread_mutex_lock(&mutex);
+    //sem_wait(&sem_empty);
 
-        // Desencolar un elemento y consumirlo
-        struct element* item = queue_get(sharedQueue);
-        // Consumir el elemento item
+    pthread_mutex_lock(&mutex);//bloqueo por entrar en seccion critica
+    //seccion critica
+    struct element *getElement;
+    getElement = queue_get(sharedQueue);
+    //salida de seccion critica
+    pthread_mutex_unlock(&mutex);
 
-        pthread_mutex_unlock(&mutex);
-        sem_post(&sem_empty);
-    }
+    //operaciones
+    //añadir código de operaciones
+    //sem_post(&sem_full);
     return NULL;
 }
 
@@ -67,7 +144,17 @@ int main (int argc, const char * argv[])
       perror("Error creating file");
       return 1;
     }
+    int max;
+    ssize_t nread;
+    char buffer[64];//buffer por defecto de 64 bytes, no es necesario tanto
 
+    if (read_line(0, buffer, sizeof(buffer)) >= 0) {
+        max = atoi(buffer); // Convertir la cadena leída a un entero
+    } else {
+        printf("Error al leer la línea de max operations.\n");
+    }
+    elemsQueue = queue_init(max);
+    almacenar(fd);
 
   int n_productores = atoi(argv[1]), n_consumidores = atoi(argv[2]), tam_buffer = atoi(argv[3]);
   //inicializamos los hilos
@@ -82,7 +169,7 @@ int main (int argc, const char * argv[])
 
   // creamos todos los hilos productores
   for (int i = 0; i < n_productores; i++){
-      if (pthread_create(&productores[i], NULL, producir(fd), NULL) != 0) {
+      if (pthread_create(&productores[i], NULL, producir(), NULL) != 0) {
           perror("Error al crear el hilo");
           return 1;
       }
