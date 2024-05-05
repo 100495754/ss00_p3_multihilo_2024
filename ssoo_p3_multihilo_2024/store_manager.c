@@ -17,7 +17,7 @@
 
 queue* sharedQueue;
 queue* elemsQueue;
-sem_t sem_full, sem_empty;
+//sem_t sem_full, sem_empty;
 pthread_mutex_t mutex;
 pthread_cond_t no_lleno;
 pthread_cond_t no_vacio;
@@ -57,15 +57,11 @@ void almacenar(int fd){
     struct element e;
     int salto = 0;
 
-    while (!salto) {
-        read(fd, buff, 1);
-        if (buff[0] == '\n') {
-            salto = 1; // Rompe el bucle si se encuentra un salto de línea
-        }
-    }
     // Inicia un bucle infinito que se rompe solo si 'read' falla
     while((nread = read(fd, buff, 1)) > 0) {
+
         e.product_id = atoi(buff);
+        printf("  almacenar1: %d   %d\n", atoi(buff), e.product_id);
         read(fd, buff, 1);
         read(fd, buff, 1);
 
@@ -253,8 +249,7 @@ int main (int argc, const char * argv[])
 
     //ALMACENAMOS SOLO LAS OPERACIONES INDICADAS
     elemsQueue = queue_init(max);
-
-
+    printf("  capacity: %d\n", elemsQueue->capacity);
     almacenar(fd);
 
     //INICIALIZAMOS LAS VARIABLES DE LOS HILOS Y SUS VALORES
