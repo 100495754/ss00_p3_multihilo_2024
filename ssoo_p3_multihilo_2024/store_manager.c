@@ -22,8 +22,12 @@ sem_t sem_prod, sem_cons;
 pthread_mutex_t mutex;
 pthread_cond_t no_lleno;
 pthread_cond_t no_vacio;
-int total = 0, operaciones = 0, retiradas = 0;//variable global para los profits (evita que los hilos den diferentes profits)
+int total = 0;//variable global para los profits (evita que los hilos den diferentes profits)
 int product_stock_consumir [5] = {0};
+int n_productores, n_consumidores, tam_buffer;
+int max= 0, sumar = 0, sumar2 = 0;
+int id_productor = 0, id_consumidor=0;
+
 
 
 /* Esta funcion recoge la primera linea del fichero entrante para guardar el numero maximo de operaciones a realizar*/
@@ -108,40 +112,57 @@ void almacenar(int fd){
 
 
 /* Esta funcion coge datos de la cola que guarda los elementos del fichero y almacena de uno en uno en el buffer compartido*/
-void *producir(){
-    sem_wait(&sem_prod);
-    while(operaciones < elemsQueue->capacity){
+void *producir(void *arg){
+    int work = 0;
+    int reparto = 0;
+
+    sem_wait(&sem_prod);//entrada en seccion critica de obtener reparto
+    reparto = max / n_productores;
+    if (id_productor == n_productores-1){
+        reparto += sumar; // RESIDUO
+    }
+    id_productor++;
+
+    sem_post(&sem_prod);//salida de critica de reparto
+
+
+    while(work < reparto){
         pthread_mutex_lock(&mutex);//bloqueo por entrar en seccion critica
         //seccion critica
         while (sharedQueue->capacity == sharedQueue->count){//BUFFER LLENO
             pthread_cond_wait(&no_lleno, &mutex);
         }
-        if (operaciones<elemsQueue->capacity){
-            struct element *newElem = queue_get(elemsQueue);//coge de la cola auxiliar
-            queue_put(sharedQueue, newElem);// introduce en el buffer compartido
-            operaciones++;
-            pthread_cond_signal(&no_vacio);// esto manda la señal de que el buffer ya no esta vacio
-            pthread_mutex_unlock(&mutex);//salida de seccion critica
-        }
-        else{
-            pthread_mutex_unlock(&mutex);//salida de seccion critica
-            return NULL;//ya no hay mas que producir, por tanto termina el hilo
-        }
+        struct element *newElem = queue_get(elemsQueue);//coge de la cola auxiliar
+        queue_put(sharedQueue, newElem);// introduce en el buffer compartido
+        work++;
+        pthread_cond_signal(&no_vacio);// esto manda la señal de que el buffer ya no esta vacio
+        pthread_mutex_unlock(&mutex);//salida de seccion critica
+
     }
-    sem_post(&sem_prod);
+
     return NULL;
 }
 
 void *consumir(){
-    sem_wait(&sem_cons);
-    while(retiradas < elemsQueue->capacity){
+    int work = 0;
+    int reparto = 0;
+
+    sem_wait(&sem_cons);//entrada en seccion critica de obtener reparto
+    reparto = max / n_consumidores;
+    if (id_consumidor == n_consumidores-1){
+        reparto += sumar2; // RESIDUO
+    }
+    id_consumidor++;
+    sem_post(&sem_cons);//salida de critica de reparto
+
+
+    while(work < reparto){
         pthread_mutex_lock(&mutex);//bloqueo por entrar en seccion critica
-        //seccion critica
         while (sharedQueue->count == 0){//BUFFER VACIO
             pthread_cond_wait(&no_vacio, &mutex);
         }
         struct element *getElement = queue_get(sharedQueue);
-        retiradas++;
+        work++;
         if (getElement == NULL) {
             printf( "Failed to get new element.\n");
             pthread_mutex_unlock(&mutex);
@@ -219,11 +240,11 @@ void *consumir(){
                 total = total + beneficio;
             }
         }
-        //salida de seccion critica
+
         pthread_cond_signal(&no_lleno);// esto manda la señal de que el buffer ya no esta vacio
-        pthread_mutex_unlock(&mutex);
+        pthread_mutex_unlock(&mutex); //salida de seccion critica
     }
-    sem_post(&sem_cons);
+
     return NULL;
 }
 
@@ -238,6 +259,11 @@ int main (int argc, const char * argv[])
         perror("Demasiados argumentos");
         return -1;
     }
+    //COMPROBAMOS QUE ESTEN LOS 4 ARGUMENTOS
+    if (!argv[1] || !argv[2] || !argv[3] || !argv[4]){
+        perror("Demasiados argumentos");
+        return -1;
+    }
 
     //ABRIMOS EL FICHERO ENTRANTE
     int fd = open(argv[1], O_RDONLY);
@@ -245,7 +271,6 @@ int main (int argc, const char * argv[])
         perror("Error opening file");
         return 1;
     }
-    int max;
 
     //LEEMOS LA PRIMERA LINEA
     max = read_line(fd);
@@ -258,7 +283,7 @@ int main (int argc, const char * argv[])
     almacenar(fd);
 
     //INICIALIZAMOS LAS VARIABLES DE LOS HILOS Y SUS VALORES
-    int n_productores = atoi(argv[2]), n_consumidores = atoi(argv[3]), tam_buffer = atoi(argv[4]);
+    n_productores = atoi(argv[2]), n_consumidores = atoi(argv[3]), tam_buffer = atoi(argv[4]);
     //inicializamos los hilos
     pthread_t productores[n_productores], consumidores[n_consumidores];
 
@@ -272,6 +297,10 @@ int main (int argc, const char * argv[])
     sharedQueue = queue_init(tam_buffer);
 
 
+    if (max%n_productores!=0){
+        sumar = max%n_productores; //variable que suma al reparto del ultimo hilo el residuo restante
+    }
+
     // creamos todos los hilos productores
     for (int i = 0; i < n_productores; i++){
         if (pthread_create(&productores[i], NULL, producir, NULL) != 0) {
@@ -280,9 +309,13 @@ int main (int argc, const char * argv[])
         }
     }
 
+    if (max%n_consumidores!=0){
+        sumar2 = max%n_consumidores; //variable que suma al reparto del ultimo hilo el residuo restante
+    }
+
     //creamos los hilos consumidores
     for (int i = 0; i < n_consumidores; i++){
-        if (pthread_create(&consumidores[i], NULL, consumir, NULL) != 0) {
+    if (pthread_create(&consumidores[i], NULL, consumir, NULL) != 0) {
             printf("Error al crear el hilo");
             return 1;
         }
